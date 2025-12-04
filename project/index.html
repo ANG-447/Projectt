@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Certificate Generator </title>
+  
+</head>
+<body>
+  <div class="title-bar">
+  <h1>Certificate Generator</h1>
+  
+</div>
+
+  <p class="hint">Upload a certificate image template, a CSV of participants (name). This page will generate certificates in the browser and let you download them as a PDF. </p>
+
+  <div class="panel">
+    <label for="templateFile">1) Certificate template image</label>
+    <input id="templateFile" type="file" accept="image/*" />
+
+    <label>Text options</label>
+    <div class="row">
+      <input id="fontSize" type="range" min="20" max="120" value="48" />
+      <input id="textColor" type="color" value="#000000" />
+    </div>
+
+    <label for="csvFile">2) Participants CSV (columns: name)</label>
+    <input id="csvFile" type="file" accept=".csv,text/csv" />
+
+    <label for="manualNames">Or enter names manually (one per line). No format required — one name per line</label>
+    <textarea id="manualNames" rows="6" placeholder="John 
+Jane "></textarea>
+    <button id="loadManualBtn" style="margin-top:6px">Load Manual Entries</button>
+    
+
+    <label for="yPosition">Vertical position (percentage from top where the name will be drawn)</label>
+<input id="yPosition" type="range" min="0" max="100" value="55" />
+
+    <div style="margin-top:10px" class="controls">
+      <button id="previewBtn">Preview </button>
+      <button id="generateBtn">Download PDF</button>
+      
+    </div>
+
+  </div>
+
+  <div class="panel">
+    <label>Log / Status</label>
+    <div id="log" class="log">Ready.</div>
+  </div>
+
+  <div class="panel">
+    <label>Preview</label>
+    <div id="previewWrap"></div>
+  </div>
+
+  <canvas id="work" ></canvas>
+
+  
+    </pre>
+    
+  </details>
+
+  <!-- Load jsPDF correctly -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<!-- Add helpers BELOW in a new <script> -->
+<script>
+  function blobToDataURL(blob){
+    return new Promise(resolve=>{
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  }
+</script>
+
+  <script>
+    // Utilities
+    const logEl = document.getElementById('log');
+    function log(...args){const s = args.map(a=>typeof a==='string'?a:JSON.stringify(a)).join(' '); logEl.textContent = (new Date()).toLocaleTimeString() + ' - ' + s + '\n' + logEl.textContent;}
+    
+    
+    // parse simple CSV (header row required)
+    function parseCSV(text){
+      const lines = text.trim().split('\n').map(l=>l.trim()).filter(Boolean);
+      if(lines.length<2) return [];
+      const headers = lines[0].split(',').map(h=>h.trim().toLowerCase());
+      return lines.slice(1).map(line=>{
+        const cols = line.split(','); const obj={};
+        headers.forEach((h,i)=> obj[h]= (cols[i]||'').trim());
+        return obj;
+      }).filter(r => r.name && r.email);
+    }
+
+    // load template
+    let templateImg = null;
+    document.getElementById('templateFile').addEventListener('change', async (e)=>{
+      const f = e.target.files[0];
+      if(!f) return; const data = await f.arrayBuffer();
+      const blob = new Blob([data]);
+      const url = URL.createObjectURL(blob);
+      const img = new Image(); img.onload = ()=>{ templateImg = img; log('Template loaded', img.width +'x'+img.height); URL.revokeObjectURL(url); }
+      img.onerror = ()=>{ log('Template load error'); }
+      img.src = url;
+    });
+
+    // read CSV (unchanged)
+    document.getElementById('loadManualBtn').addEventListener('click', ()=> {
+      const text = document.getElementById('manualNames').value.trim();
+      if(!text){ log('No manual names entered'); return; }
+
+      // NEW: accept ANY text, one name per line — no format, no commas
+const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+
+      const parsed = lines.map(name => ({ name, email: '' }));
+      participants = parsed;
+      log('Loaded manual entries (names only):', participants.length);
+    });
+    let participants = [];
+    document.getElementById('csvFile').addEventListener('change', async (e)=>{
+      const f = e.target.files[0];
+      if(!f) return; const txt = await f.text(); participants = parseCSV(txt); log('CSV loaded, rows:', participants.length);
+    });
+
+    // draw single certificate
+    async function drawCertificate(name){
+      if(!templateImg) throw new Error('Template not loaded');
+      const canvas = document.getElementById('work');
+      canvas.width = templateImg.width; canvas.height = templateImg.height;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(templateImg,0,0);
+
+      // text style
+      const size = parseInt(document.getElementById('fontSize').value) || 48;
+      ctx.font = size + 'px Arial';
+      let maxWidth = canvas.width * 0.8;
+      while(ctx.measureText(name).width > maxWidth && size > 10){ size -= 2; ctx.font = size + 'px Arial'; }
+      if(size <= 10){ log('Warning: Name too long to display clearly.'); }
+      ctx.textAlign = 'center';
+      ctx.fillStyle = document.getElementById('textColor').value || '#000';
+
+      const yPercent = parseFloat(document.getElementById('yPosition').value||'55')/100;
+      const x = canvas.width/2; const y = canvas.height * yPercent;
+
+      // outline for better readability (simple stroke)
+      ctx.lineWidth = Math.max(2, Math.floor(canvas.width/400));
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.strokeText(name, x, y);
+      // draw guide line
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvas.width, y);
+      ctx.stroke();
+
+      // draw text
+      ctx.fillStyle = document.getElementById('textColor').value || '#000';
+      ctx.fillText(name, x, y);
+
+      return new Promise((res)=> canvas.toBlob(blob=>res(blob), 'image/png'));
+    }
+
+    document.getElementById('previewBtn').addEventListener('click', async ()=>{
+      try{
+        if(!templateImg) return log('Please load a template image first.');
+
+        // Correct preview selection logic
+        let sample = 'Auto Generated Name';
+        if (participants && participants.length > 0 && participants[0].name) {
+          sample = participants[0].name;
+        }
+
+        const blob = await drawCertificate(sample);
+        const url = URL.createObjectURL(blob);
+        const wrap = document.getElementById('previewWrap'); 
+        wrap.innerHTML = '';
+        const img = document.createElement('img'); 
+        img.src = url; 
+        img.style.maxWidth='100%'; 
+        wrap.appendChild(img);
+
+        log('Preview generated for: ' + sample);
+      }catch(err){log('Preview error', err.message)}
+    });
+
+    // 📌 FIXED PDF DOWNLOAD
+    document.getElementById("generateBtn").addEventListener("click", async ()=>{
+      if(!templateImg) return log("Load template");
+      if(participants.length===0) return log("No names loaded");
+
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({
+        orientation: "landscape",
+        unit: "px",
+        format: [templateImg.width, templateImg.height]
+      });
+
+      for(let i=0;i<participants.length;i++){
+        const p = participants[i];
+        const blob = await drawCertificate(p.name);
+        const url = await blobToDataURL(blob);
+
+        if(i>0) pdf.addPage();
+        pdf.addImage(url,"PNG",0,0,templateImg.width,templateImg.height);
+
+        log("Added:", p.name);
+      }
+
+      pdf.save("certificates.pdf");
+      log("PDF saved");
+    });
+
+    
+
+  </script>
+</body>
+</html>
